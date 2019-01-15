@@ -335,6 +335,9 @@ So we don't need project root at all.  Or you can setup `counsel-etags-project-r
 
 (defvar counsel-etags-tag-history nil "History of tagnames.")
 
+(defvar counsel-etags-tags-file-history nil
+  "Tags files history.  Recently accessed tags file is always the first of history.")
+
 (defvar counsel-etags-find-tag-candidates nil "Find tag candidate.")
 
 (defvar counsel-etags-cache nil "Cache of multiple tags files.")
