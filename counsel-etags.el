@@ -378,19 +378,13 @@ Return nil if it's not found."
     (delete-char -1)
     (buffer-string)))
 
+(defun counsel-etags-get-tags-file-path (dir)
+  "Get full path of tags file from DIR."
+  (and dir (file-truename (concat (file-name-as-directory dir) "TAGS"))))
+
 (defun counsel-etags-locate-tags-file ()
-  "Find tags file: Search in parent directory or use `tags-file-name'."
-  (let* ((dir (locate-dominating-file default-directory "TAGS")))
-    (cond
-     ;; Since we use `tags-file-name' only. The assumption is that the
-     ;; only one tags file is created per project. So in theory we should find
-     ;; tags file in parent directory
-     ;; Besides, we don't need worry about right location of tags file when
-     ;; switching projects,  using "search-parent-directory-first" method.
-     (dir
-      (concat dir "TAGS"))
-     ((and tags-file-name (file-exists-p tags-file-name))
-      tags-file-name))))
+  "Find tags file: Search `counsel-etags-tags-file-history' and parent directories."
+  (counsel-etags-get-tags-file-path (locate-dominating-file default-directory "TAGS")))
 
 (defun counsel-etags-tags-file-directory ()
   "Directory of tags file."
@@ -410,6 +404,16 @@ Return nil if it's not found."
     (or project-root
         (progn (message counsel-etags-no-project-msg)
                nil))))
+
+(defun counsel-etags-add-tags-file-to-history (tags-file)
+  "Add TAGS-FILE to the top of `counsel-etags-tags-file-history'."
+  (let* ((file (file-truename tags-file))
+         (rlt (delq nil (mapcar
+                         (lambda (s)
+                           (unless (string= file (file-truename s)) s))
+                         counsel-etags-tags-file-history))))
+    (add-to-list 'rlt tags-file)
+    (setq counsel-etags-tags-file-history rlt)))
 
 (defun counsel-etags-async-shell-command (command tags-file)
   "Execute string COMMAND and create TAGS-FILE asynchronously."
@@ -436,11 +440,7 @@ Return nil if it's not found."
                                           (if counsel-etags-debug (message "`%s` executed." cmd))
                                           ;; reload tags-file
                                           (when (and ,tags-file (file-exists-p ,tags-file))
-                                            (message "Tags file %s was created." ,tags-file)
-                                            ;; `visit-tags-table' create buffer local variable `tags-file-name'
-                                            ;; so we need make sure current buffer is correct
-                                            (set-buffer ,buffer)
-                                            (visit-tags-table ,tags-file t))))
+                                            (message "Tags file %s was created." ,tags-file))))
                                        (t
                                         (message "Failed to create tags file.")))))))
       ;; Use the comint filter for proper handling of carriage motion
@@ -537,7 +537,7 @@ If FORCE is t, the command is executed without checking the timer."
          ;; if only ctags exists, use ctags
          ;; run find&ctags to create TAGS, `-print` is important option to filter correctly
          (cmd (counsel-etags-get-scan-command find-program ctags-program))
-         (tags-file (file-truename (concat (file-name-as-directory src-dir) "TAGS")))
+         (tags-file (counsel-etags-get-tags-file-path src-dir))
          (doit (or force (not (file-exists-p tags-file)))))
     (unless ctags-program
       (error "Please install Ctags before running this program!"))
@@ -590,12 +590,13 @@ If `counsel-etags-update-tags-backend' is customized, executed it to create tags
     (string-match-p regex file)))
 
 ;;;###autoload
-(defun counsel-etags-update-tags-force ()
+(defun counsel-etags-update-tags-force (&optional forced-tags-file)
   "Update tags file now using default implementation."
   (interactive)
-  (let* ((tags-file (counsel-etags-locate-tags-file)))
+  (let* ((tags-file (or forced-tags-file
+                        (counsel-etags-locate-tags-file))))
     (when tags-file
-      (counsel-etags-scan-dir (counsel-etags-tags-file-directory) t)
+      (counsel-etags-scan-dir (file-name-directory (file-truename tags-file)) t)
       (run-hook-with-args 'counsel-etags-after-update-tags-hook tags-file)
       (unless counsel-etags-quiet-when-updating-tags
         (message "%s is updated!" tags-file)))))
@@ -724,8 +725,8 @@ CONTEXT is extra information collected before find tag definition."
   (when counsel-etags-debug
     (message "counsel-etags-collect-cands => tagname=%s fuzz=%s dir=%s" tagname fuzzy dir))
   (let* ((force-tags-file (and dir
-                               (file-exists-p (concat (file-name-as-directory dir) "TAGS"))
-                               (concat (file-name-as-directory dir) "TAGS")))
+                               (file-exists-p (counsel-etags-get-tags-file-path dir))
+                               (counsel-etags-get-tags-file-path dir)))
          (tags-file (or force-tags-file
                         (counsel-etags-locate-tags-file)))
          (root-dir (file-name-directory tags-file))
@@ -903,6 +904,7 @@ Focus on TAGNAME if it's not nil."
                                            (or (counsel-etags-locate-project)
                                                default-directory)))))
     (when src-dir
+      (counsel-etags-add-tags-file-to-history (counsel-etags-get-tags-file-path src-dir))
       (counsel-etags-scan-dir src-dir t))))
 
 (defun counsel-etags-positive-regex (patterns)
@@ -1045,7 +1047,8 @@ the tags updating might not happen."
   (interactive)
   (let* ((dir (and buffer-file-name
                    (file-name-directory buffer-file-name)))
-         (tags-file (counsel-etags-locate-tags-file)))
+         (tags-file (and counsel-etags-tags-file-history
+                         (car counsel-etags-tags-file-history))))
     (when (and dir
                tags-file
                (string-match-p (file-name-directory (file-truename tags-file))
